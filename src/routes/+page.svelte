@@ -16,14 +16,8 @@
 	import { TerrainGlobeView } from '#lib/globe-view.js';
 	import { asset } from '$app/paths';
 	import { initGroundWorkers, requestEllipsoidal } from '#lib/ground-client.js';
-	import { GEOID_COLOR_STOPS, cssGradient, stretchedStops } from '#lib/colors.js';
-	import {
-		createContourLayer,
-		createGeoidLayer,
-		createProfileWallLayers,
-		CURSOR_COLOR,
-		WATER_COLOR
-	} from '#lib/layers.js';
+	import { GEOID_COLOR_STOPS, PROFILE_COLOR, cssGradient, stretchedStops } from '#lib/colors.js';
+	import { createContourLayer, createGeoidLayer, WATER_COLOR } from '#lib/layers.js';
 	import {
 		MAPTERHORN_MAX_ZOOM,
 		geoidView,
@@ -67,9 +61,7 @@
 		autoColorRange: true,
 		/** 水面をジオイドから何 m 上げるか */
 		waterLevel: 0,
-		showContours: true,
-		/** 断面の線に沿って地図に壁を立てる */
-		showWall: true
+		showContours: true
 	});
 
 	/** いま見えている範囲のジオイド高の範囲と等ジオイド高線 */
@@ -220,7 +212,7 @@
 			type: 'line',
 			source: 'profile-line',
 			layout: { 'line-cap': 'round', 'line-join': 'round' },
-			paint: { 'line-color': PROFILE_COLOR, 'line-width': 2.5 }
+			paint: { 'line-color': PROFILE_CSS, 'line-width': 2.5 }
 		});
 		m.addLayer({
 			id: 'profile-cursor',
@@ -228,7 +220,7 @@
 			source: 'profile-cursor',
 			paint: {
 				'circle-radius': 6,
-				'circle-color': PROFILE_COLOR,
+				'circle-color': PROFILE_CSS,
 				'circle-stroke-color': '#ffffff',
 				'circle-stroke-width': 2
 			}
@@ -239,7 +231,7 @@
 
 	const emptyCollection: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 	/** 断面の線・端点・カーソルの色。データの色 (地表のオレンジ・ジオイドの青) と分ける */
-	const PROFILE_COLOR = `rgb(${CURSOR_COLOR.join(' ')})`;
+	const PROFILE_CSS = `rgb(${PROFILE_COLOR.join(' ')})`;
 
 	function mountMap(container: HTMLDivElement) {
 		const m = new MaplibreMap({
@@ -315,7 +307,7 @@
 		if (!map) return;
 		const m = map;
 		const markers = profileEnds.map((p, i) => {
-			const marker = new Marker({ color: PROFILE_COLOR, draggable: true, scale: 0.7 })
+			const marker = new Marker({ color: PROFILE_CSS, draggable: true, scale: 0.7 })
 				.setLngLat([p[0], p[1]])
 				.addTo(m);
 			marker.on('dragend', () => {
@@ -367,9 +359,7 @@
 	$effect(() => {
 		const source = map?.getSource<GeoJSONSource>('profile-cursor');
 		if (!source) return;
-		// 壁を立てているときは、カーソルは壁の上に出すので地面の点は出さない
-		const wallShown = options.showWall && options.showGround;
-		const s = profileHover === undefined || wallShown ? undefined : profile?.samples[profileHover];
+		const s = profileHover === undefined ? undefined : profile?.samples[profileHover];
 		source.setData(s ? { type: 'Point', coordinates: s.lngLat } : emptyCollection);
 	});
 
@@ -412,10 +402,6 @@
 							options.showContours && !options.showGround
 						)
 					]
-				: []),
-			// 壁は地形と同じ強調で、地形の上に立てる
-			...(profile && options.showWall && options.showGround
-				? createProfileWallLayers(profile, options.exaggeration, profileHover)
 				: [])
 		];
 		overlay?.setProps({ layers });
@@ -653,16 +639,6 @@
 							2 点を結ぶ線に沿って、地表・ジオイド・地球楕円体の断面を描きます。
 						{/if}
 					</p>
-					{#if profileEnds.length === 2}
-						<label class="flex items-center gap-2 text-xs" class:opacity-40={!options.showGround}>
-							<input
-								type="checkbox"
-								disabled={!options.showGround}
-								bind:checked={options.showWall}
-							/>
-							地図に断面の壁を立てる (地表面があるとき)
-						</label>
-					{/if}
 				</div>
 
 				<details class="text-xs text-slate-600">

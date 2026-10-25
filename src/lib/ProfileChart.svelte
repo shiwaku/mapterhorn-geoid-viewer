@@ -101,7 +101,7 @@
 	const tooltipFlip = $derived(tooltipLeft > width - 190);
 </script>
 
-<!-- 系列の色は dataviz の検証済みパレットの 1・2 番 (地図上の壁と同じ) -->
+<!-- 系列の色は dataviz の検証済みパレットの 1・2 番 -->
 <div
 	class="flex h-full w-full flex-col gap-1 text-slate-700"
 	style:--ground={GROUND_COLOR}
