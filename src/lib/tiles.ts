@@ -9,7 +9,7 @@ export function ancestorTile(tile: TileIndex, maxZoom: number): TileIndex {
 }
 
 /** グリッドのピクセル座標 (fx, fy) を双一次補間する。範囲外は端の値 */
-function bilinear(src: HeightGrid, fx: number, fy: number): number {
+export function bilinear(src: HeightGrid, fx: number, fy: number): number {
 	const max = src.size - 1;
 	fx = Math.min(Math.max(fx, 0), max);
 	fy = Math.min(Math.max(fy, 0), max);
