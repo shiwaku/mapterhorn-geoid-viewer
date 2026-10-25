@@ -12,7 +12,8 @@
 	} from 'maplibre-gl';
 	// Vite の事前バンドルでは MapLibre が自分の Worker を見つけられないので明示する
 	import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-	import { MapLibreOverlay } from '@deck.gl/maplibre';
+	import { MapLibreOverlay, type MapLibreOverlayProps } from '@deck.gl/maplibre';
+	import { TerrainGlobeView } from '#lib/globe-view.js';
 	import { asset } from '$app/paths';
 	import { initGroundWorkers, requestEllipsoidal } from '#lib/ground-client.js';
 	import { GEOID_COLOR_STOPS, cssGradient, stretchedStops } from '#lib/colors.js';
@@ -261,7 +262,13 @@
 		});
 
 		// 地表面の地形と前後関係を正しく描くため、MapLibre の描画に組み込む
-		overlay = new MapLibreOverlay({ interleaved: true, layers: [] });
+		overlay = new MapLibreOverlay({
+			interleaved: true,
+			layers: [],
+			// 地形があるときに deck.gl のレイヤが地図を動かすとずれないよう、地形の高さを真上向きに扱う
+			// MapLibreOverlayProps の views は型が null に固定されているが、実行時は id が maplibre のビューを使う
+			views: new TerrainGlobeView({ id: 'maplibre' }) as unknown as MapLibreOverlayProps['views']
+		});
 		m.addControl(overlay);
 		// 開発時のデバッグ用
 		if (import.meta.env.DEV) {
