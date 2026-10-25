@@ -2,7 +2,7 @@ import { COORDINATE_SYSTEM, type Layer } from '@deck.gl/core';
 import { TileLayer, type TileLayerProps } from '@deck.gl/geo-layers';
 import { PathLayer } from '@deck.gl/layers';
 import { SimpleMeshLayer } from '@deck.gl/mesh-layers';
-import { colorAt, type ColorStops, type RGB } from './colors';
+import { colorAt, GEOID_LINE_COLOR, GROUND_LINE_COLOR, type ColorStops, type RGB } from './colors';
 import type { Profile } from './sources';
 import { geoidCornersForTile } from './sources';
 import { tileToLngLat, type TileIndex } from './tiles';
@@ -167,9 +167,10 @@ export function createContourLayer(
 
 /** 断面の線に沿って立てる壁の色 (断面図と同じ) */
 const WALL_COLORS = {
-	ellipsoid: [248, 113, 113],
-	geoid: [96, 165, 250],
-	ground: [253, 186, 116]
+	// 楕円体面より下 (地球の内側) は灰色で控えめに
+	ellipsoid: [203, 213, 225],
+	geoid: [178, 206, 240],
+	ground: [248, 196, 172]
 } as const satisfies Record<string, RGB>;
 
 type WallMesh = GeoidMesh;
@@ -237,8 +238,8 @@ export function createProfileWallLayers(profile: Profile, exaggeration: number):
 		new PathLayer({
 			id: 'profile-wall-lines',
 			data: [
-				{ path: path('geoid'), color: [29, 78, 216], width: 3 },
-				{ path: path('ellipsoidal'), color: [194, 65, 12], width: 2 }
+				{ path: path('geoid'), color: GEOID_LINE_COLOR, width: 3 },
+				{ path: path('ellipsoidal'), color: GROUND_LINE_COLOR, width: 3 }
 			],
 			getPath: (d) => d.path,
 			getColor: (d) => d.color,
