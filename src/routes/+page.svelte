@@ -21,6 +21,7 @@
 		createContourLayer,
 		createGeoidLayer,
 		createProfileWallLayers,
+		CURSOR_COLOR,
 		WATER_COLOR
 	} from '#lib/layers.js';
 	import {
@@ -219,7 +220,7 @@
 			type: 'line',
 			source: 'profile-line',
 			layout: { 'line-cap': 'round', 'line-join': 'round' },
-			paint: { 'line-color': '#7c3aed', 'line-width': 3 }
+			paint: { 'line-color': PROFILE_COLOR, 'line-width': 2.5 }
 		});
 		m.addLayer({
 			id: 'profile-cursor',
@@ -227,7 +228,7 @@
 			source: 'profile-cursor',
 			paint: {
 				'circle-radius': 6,
-				'circle-color': '#7c3aed',
+				'circle-color': PROFILE_COLOR,
 				'circle-stroke-color': '#ffffff',
 				'circle-stroke-width': 2
 			}
@@ -237,6 +238,8 @@
 	}
 
 	const emptyCollection: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+	/** 断面の線・端点・カーソルの色。データの色 (地表のオレンジ・ジオイドの青) と分ける */
+	const PROFILE_COLOR = `rgb(${CURSOR_COLOR.join(' ')})`;
 
 	function mountMap(container: HTMLDivElement) {
 		const m = new MaplibreMap({
@@ -312,7 +315,7 @@
 		if (!map) return;
 		const m = map;
 		const markers = profileEnds.map((p, i) => {
-			const marker = new Marker({ color: '#7c3aed', draggable: true, scale: 0.7 })
+			const marker = new Marker({ color: PROFILE_COLOR, draggable: true, scale: 0.7 })
 				.setLngLat([p[0], p[1]])
 				.addTo(m);
 			marker.on('dragend', () => {
@@ -364,7 +367,9 @@
 	$effect(() => {
 		const source = map?.getSource<GeoJSONSource>('profile-cursor');
 		if (!source) return;
-		const s = profileHover === undefined ? undefined : profile?.samples[profileHover];
+		// 壁を立てているときは、カーソルは壁の上に出すので地面の点は出さない
+		const wallShown = options.showWall && options.showGround;
+		const s = profileHover === undefined || wallShown ? undefined : profile?.samples[profileHover];
 		source.setData(s ? { type: 'Point', coordinates: s.lngLat } : emptyCollection);
 	});
 
@@ -410,7 +415,7 @@
 				: []),
 			// 壁は地形と同じ強調で、地形の上に立てる
 			...(profile && options.showWall && options.showGround
-				? createProfileWallLayers(profile, options.exaggeration)
+				? createProfileWallLayers(profile, options.exaggeration, profileHover)
 				: [])
 		];
 		overlay?.setProps({ layers });
@@ -623,7 +628,7 @@
 						<span class="flex gap-1">
 							<button
 								type="button"
-								class="rounded bg-violet-600 px-2 py-0.5 text-xs text-white hover:bg-violet-700"
+								class="rounded bg-slate-800 px-2 py-0.5 text-xs text-white hover:bg-slate-700"
 								onclick={startProfile}
 							>
 								{profileEnds.length ? '引き直す' : '線を引く'}

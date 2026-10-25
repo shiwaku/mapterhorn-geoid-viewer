@@ -1,6 +1,6 @@
 import { COORDINATE_SYSTEM, type Layer } from '@deck.gl/core';
 import { TileLayer, type TileLayerProps } from '@deck.gl/geo-layers';
-import { PathLayer } from '@deck.gl/layers';
+import { PathLayer, ScatterplotLayer } from '@deck.gl/layers';
 import { SimpleMeshLayer } from '@deck.gl/mesh-layers';
 import { colorAt, GEOID_LINE_COLOR, GROUND_LINE_COLOR, type ColorStops, type RGB } from './colors';
 import type { Profile } from './sources';
@@ -206,11 +206,18 @@ function buildWallMesh(profile: Profile, exaggeration: number): WallMesh {
 
 type WallLine = { path: [number, number, number][]; color: RGB; width: number };
 
+/** 断面の線・端点・カーソルの色 (slate-800)。データの色 (地表・ジオイド) と区別する */
+export const CURSOR_COLOR: RGB = [30, 41, 59];
+
 /**
  * 断面の線に沿って地図に立てる壁と、地表・ジオイドの線。
  * 楕円体面は壁の下端でわかるので線は引かない (ジオイドの線とほぼ重なり、交互に見えて点線のようになる)
  */
-export function createProfileWallLayers(profile: Profile, exaggeration: number): Layer[] {
+export function createProfileWallLayers(
+	profile: Profile,
+	exaggeration: number,
+	hoverIndex?: number
+): Layer[] {
 	const path = (height: (s: Profile['samples'][number]) => number) =>
 		profile.samples.map(
 			(s) => [s.lngLat[0], s.lngLat[1], height(s) * exaggeration] as [number, number, number]
@@ -239,14 +246,15 @@ export function createProfileWallLayers(profile: Profile, exaggeration: number):
 		new SimpleMeshLayer({
 			id: 'profile-wall',
 			data: [0],
-			mesh: buildWallMesh(profile, exaggeration),
+			mesh: wallMesh(profile, exaggeration),
 			_instanced: false,
 			coordinateSystem: COORDINATE_SYSTEM.LNGLAT,
 			getPosition: () => [0, 0, 0],
 			getColor: [255, 255, 255],
-			// 陰影を付けず、地図が少し透けるすりガラスにする
+			// 陰影を付けず、淡い色の面にする。壁はほぼ地面の下にあるのに手前に描くので、
+			// 透かすと手前の地形が壁の上を滑るように見える。不透明に近くして地形を透かさない
 			material: { ambient: 1, diffuse: 0, shininess: 1, specularColor: [0, 0, 0] },
-			opacity: 0.82,
+			opacity: 0.9,
 			parameters
 		}),
 		new PathLayer<WallLine>({
@@ -254,6 +262,59 @@ export function createProfileWallLayers(profile: Profile, exaggeration: number):
 			id: 'profile-wall-lines',
 			getColor: (d) => d.color,
 			getWidth: (d) => d.width
+		}),
+		...(hoverIndex === undefined
+			? []
+			: profileCursorLayers(profile.samples[hoverIndex], exaggeration, parameters))
+	];
+}
+
+/** カーソルを動かすたびに作り直さないよう、壁のメッシュは同じ断面・強調なら使い回す */
+let cachedWall: { profile: Profile; exaggeration: number; mesh: WallMesh } | undefined;
+
+function wallMesh(profile: Profile, exaggeration: number): WallMesh {
+	if (cachedWall?.profile !== profile || cachedWall.exaggeration !== exaggeration) {
+		cachedWall = { profile, exaggeration, mesh: buildWallMesh(profile, exaggeration) };
+	}
+	return cachedWall.mesh;
+}
+
+/** 断面図のカーソル位置を壁の上に示す縦線と、ジオイド (N)・地表 (h) の点 */
+function profileCursorLayers(
+	sample: Profile['samples'][number],
+	exaggeration: number,
+	parameters: object
+): Layer[] {
+	const [lng, lat] = sample.lngLat;
+	const at = (h: number): [number, number, number] => [lng, lat, h * exaggeration];
+	const points = [
+		{ position: at(sample.geoid), color: GEOID_LINE_COLOR },
+		{ position: at(sample.ellipsoidal), color: GROUND_LINE_COLOR }
+	];
+	return [
+		new PathLayer({
+			id: 'profile-wall-cursor',
+			data: [{ path: [at(0), at(Math.max(sample.ellipsoidal, sample.geoid))] }],
+			getPath: (d) => d.path,
+			getColor: CURSOR_COLOR,
+			getWidth: 1.5,
+			widthUnits: 'pixels',
+			billboard: true,
+			parameters
+		}),
+		new ScatterplotLayer<(typeof points)[number]>({
+			id: 'profile-wall-cursor-points',
+			data: points,
+			getPosition: (d) => d.position,
+			getFillColor: (d) => d.color,
+			getLineColor: [255, 255, 255],
+			getRadius: 4,
+			radiusUnits: 'pixels',
+			stroked: true,
+			getLineWidth: 2,
+			lineWidthUnits: 'pixels',
+			billboard: true,
+			parameters
 		})
 	];
 }
