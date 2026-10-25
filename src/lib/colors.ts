@@ -2,9 +2,11 @@ export type RGB = [number, number, number];
 /** 段彩の節点 (値、色) */
 export type ColorStops = [number, RGB][];
 
-/** 断面図と地図上の壁で使う、地表 (楕円体高 h) とジオイド (N) の線の色 */
+/** 断面図で使う、地表 (楕円体高 h) とジオイド (N) の線の色 */
 export const GROUND_LINE_COLOR: RGB = [235, 104, 52];
 export const GEOID_LINE_COLOR: RGB = [42, 120, 214];
+/** 断面の線・端点・カーソルの色 (slate-800)。データの色 (地表・ジオイド) と区別する */
+export const PROFILE_COLOR: RGB = [30, 41, 59];
 
 /** 全球のジオイド高 (m) の段彩。負は青、正は赤 */
 export const GEOID_COLOR_STOPS: ColorStops = [
