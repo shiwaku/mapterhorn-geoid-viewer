@@ -165,39 +165,32 @@ export function createContourLayer(
 	});
 }
 
-/** 断面の線に沿って立てる壁の色 (断面図と同じ) */
-const WALL_COLORS = {
-	// 楕円体面より下 (地球の内側) は灰色で控えめに
-	ellipsoid: [203, 213, 225],
-	geoid: [178, 206, 240],
-	ground: [248, 196, 172]
-} as const satisfies Record<string, RGB>;
-
 type WallMesh = GeoidMesh;
 
+/** 色を白に寄せる (amount = 0 で元の色、1 で白) */
+const tint = (color: RGB, amount: number): RGB => color.map((c) => c + (255 - c) * amount) as RGB;
+
 /**
- * 断面の壁。下から地球楕円体 (赤)、楕円体〜ジオイド (青)、ジオイド〜地表 (オレンジ) の帯を重ねる。
- * 楕円体の帯の深さは、地表の起伏に合わせて決める
+ * 断面の壁。楕円体面〜ジオイド (ジオイド高 N) を青、ジオイド〜地表 (標高 H) をオレンジの帯にする。
+ * 線の色を白に寄せた淡い色にして、すりガラスのように半透明で重ねる。
+ * 色そのものを薄く重ねると、下の地図やジオイド面の色と混ざって濁るため
  */
 function buildWallMesh(profile: Profile, exaggeration: number): WallMesh {
 	const { samples } = profile;
-	const top = Math.max(...samples.map((s) => Math.max(s.ellipsoidal, s.geoid)), 1);
-	const bottom = Math.min(...samples.map((s) => Math.min(s.ellipsoidal, s.geoid)), 0) - top * 0.3;
 	const bands: [(i: number) => number, (i: number) => number, RGB][] = [
-		[() => bottom, () => 0, WALL_COLORS.ellipsoid],
-		[() => 0, (i) => samples[i].geoid, WALL_COLORS.geoid],
-		[(i) => samples[i].geoid, (i) => samples[i].ellipsoidal, WALL_COLORS.ground]
+		[() => 0, (i) => samples[i].geoid, tint(GEOID_LINE_COLOR, 0.78)],
+		[(i) => samples[i].geoid, (i) => samples[i].ellipsoidal, tint(GROUND_LINE_COLOR, 0.8)]
 	];
 	const count = samples.length;
 	const positions = new Float32Array(bands.length * count * 2 * 3);
 	const colors = new Float32Array(bands.length * count * 2 * 3);
 	const idx: number[] = [];
 	bands.forEach(([lower, upper, color], b) => {
+		const c = color.map((v) => v / 255);
 		for (let i = 0; i < count; i++) {
 			const [lng, lat] = samples[i].lngLat;
 			const k = (b * count + i) * 2;
 			positions.set([lng, lat, lower(i) * exaggeration, lng, lat, upper(i) * exaggeration], k * 3);
-			const c = color.map((v) => v / 255);
 			colors.set([...c, ...c], k * 3);
 			if (i > 0) idx.push(k - 2, k, k - 1, k - 1, k, k + 1);
 		}
@@ -211,15 +204,36 @@ function buildWallMesh(profile: Profile, exaggeration: number): WallMesh {
 	};
 }
 
-/** 断面の線に沿って地図に立てる壁と、ジオイド・地表の線 */
+type WallLine = { path: [number, number, number][]; color: RGB; width: number };
+
+/**
+ * 断面の線に沿って地図に立てる壁と、地表・ジオイドの線。
+ * 楕円体面は壁の下端でわかるので線は引かない (ジオイドの線とほぼ重なり、交互に見えて点線のようになる)
+ */
 export function createProfileWallLayers(profile: Profile, exaggeration: number): Layer[] {
-	const path = (key: 'geoid' | 'ellipsoidal') =>
-		profile.samples.map((s) => [s.lngLat[0], s.lngLat[1], s[key] * exaggeration]);
+	const path = (height: (s: Profile['samples'][number]) => number) =>
+		profile.samples.map(
+			(s) => [s.lngLat[0], s.lngLat[1], height(s) * exaggeration] as [number, number, number]
+		);
+	const lines: WallLine[] = [
+		{ path: path((s) => s.geoid), color: GEOID_LINE_COLOR, width: 2.5 },
+		{ path: path((s) => s.ellipsoidal), color: GROUND_LINE_COLOR, width: 2.5 }
+	];
 	// 壁は地面の下にも伸びるので、前後関係を無視して手前に描く
 	const parameters = {
 		depthCompare: 'always',
 		depthWriteEnabled: false,
 		cullMode: 'none'
+	} as const;
+	const lineProps = {
+		data: lines,
+		getPath: (d: WallLine) => d.path,
+		widthUnits: 'pixels',
+		// 線の幅を画面に向ける。地面に寝かせた帯にすると、globe では帯がねじれて途切れて見える
+		billboard: true,
+		jointRounded: true,
+		capRounded: true,
+		parameters
 	} as const;
 	return [
 		new SimpleMeshLayer({
@@ -230,22 +244,16 @@ export function createProfileWallLayers(profile: Profile, exaggeration: number):
 			coordinateSystem: COORDINATE_SYSTEM.LNGLAT,
 			getPosition: () => [0, 0, 0],
 			getColor: [255, 255, 255],
-			// 陰影を付けず、断面図と同じ色で塗る
+			// 陰影を付けず、地図が少し透けるすりガラスにする
 			material: { ambient: 1, diffuse: 0, shininess: 1, specularColor: [0, 0, 0] },
-			opacity: 1,
+			opacity: 0.82,
 			parameters
 		}),
-		new PathLayer({
+		new PathLayer<WallLine>({
+			...lineProps,
 			id: 'profile-wall-lines',
-			data: [
-				{ path: path('geoid'), color: GEOID_LINE_COLOR, width: 3 },
-				{ path: path('ellipsoidal'), color: GROUND_LINE_COLOR, width: 3 }
-			],
-			getPath: (d) => d.path,
 			getColor: (d) => d.color,
-			getWidth: (d) => d.width,
-			widthUnits: 'pixels',
-			parameters
+			getWidth: (d) => d.width
 		})
 	];
 }
