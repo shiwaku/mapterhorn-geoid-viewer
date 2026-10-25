@@ -12,6 +12,8 @@ export type GeoidLayerOptions = {
 	exaggeration: number;
 	visible: boolean;
 	opacity: number;
+	/** 地表面を描かないとき。奥行きを判定して立体として描く */
+	solid: boolean;
 };
 
 type GeoidMesh = {
@@ -64,7 +66,9 @@ async function buildGeoidMesh(tile: TileIndex, exaggeration: number): Promise<Ge
 	};
 }
 
-const renderSubLayers: TileLayerProps<GeoidMesh>['renderSubLayers'] = (props) =>
+type SubLayerProps = Parameters<NonNullable<TileLayerProps<GeoidMesh>['renderSubLayers']>>[0];
+
+const renderSubLayers = (props: SubLayerProps, solid: boolean) =>
 	props.data &&
 	new SimpleMeshLayer({
 		id: props.id,
@@ -76,11 +80,15 @@ const renderSubLayers: TileLayerProps<GeoidMesh>['renderSubLayers'] = (props) =>
 		getPosition: () => [0, 0, 0],
 		// 色は頂点ごとの段彩で決める
 		getColor: [255, 255, 255],
-		material: { ambient: 0.75, diffuse: 0.35, shininess: 1, specularColor: [0, 0, 0] },
+		material: solid
+			? { ambient: 0.45, diffuse: 0.7, shininess: 1, specularColor: [0, 0, 0] }
+			: { ambient: 0.75, diffuse: 0.35, shininess: 1, specularColor: [0, 0, 0] },
 		opacity: props.opacity,
 		// 陸ではジオイド面は地表の下にあり、海上では地表面 (h = N) と同じ高さになる。
-		// どちらでも見えるよう、地形との前後関係は無視して半透明で重ねる
-		parameters: { depthCompare: 'always', depthWriteEnabled: false }
+		// 地表面があるときは、どちらでも見えるよう前後関係は無視して半透明で重ねる
+		parameters: solid
+			? { depthCompare: 'less-equal', depthWriteEnabled: true }
+			: { depthCompare: 'always', depthWriteEnabled: false }
 	});
 
 export function createGeoidLayer(opts: GeoidLayerOptions): Layer {
@@ -91,8 +99,13 @@ export function createGeoidLayer(opts: GeoidLayerOptions): Layer {
 		tileSize: 512,
 		// ジオイドは滑らかなので、これより先は拡大して使う
 		maxZoom: 12,
+		// 強調した起伏でタイルが視野外と判定されないよう、高さの範囲を伝える
+		zRange: [-110 * opts.exaggeration, 90 * opts.exaggeration],
 		getTileData: ({ index }) => buildGeoidMesh(index, opts.exaggeration),
-		renderSubLayers,
-		updateTriggers: { getTileData: opts.exaggeration }
+		renderSubLayers: (props) => renderSubLayers(props, opts.solid),
+		updateTriggers: {
+			getTileData: opts.exaggeration,
+			renderSubLayers: opts.solid
+		}
 	});
 }

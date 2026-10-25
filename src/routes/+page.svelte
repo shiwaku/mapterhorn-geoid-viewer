@@ -33,6 +33,8 @@
 
 	let options = $state({
 		exaggeration: 1,
+		// ジオイドだけを見るときの強調は 10 の何乗か (1〜10,000 倍)
+		geoidExaggerationLog: 3,
 		showGround: true,
 		showGeoid: true,
 		geoidOpacity: 0.4
@@ -134,11 +136,17 @@
 		map?.setTerrain(showGround ? { source: 'ground', exaggeration } : null);
 	});
 
+	// 地表面がないときは、ジオイドの起伏を地球全体でも見えるよう大きく強調できる
+	const geoidExaggeration = $derived(
+		options.showGround ? options.exaggeration : Math.round(10 ** options.geoidExaggerationLog)
+	);
+
 	$effect(() => {
 		const layer = createGeoidLayer({
-			exaggeration: options.exaggeration,
+			exaggeration: geoidExaggeration,
 			visible: options.showGeoid,
-			opacity: options.geoidOpacity
+			opacity: options.geoidOpacity,
+			solid: !options.showGround
 		});
 		overlay?.setProps({ layers: [layer] });
 	});
@@ -169,7 +177,8 @@
 			は見えません。
 		</p>
 
-		<label class="block">
+		<!-- 地表面がないときは、ジオイド面の欄の強調を使う -->
+		<label class="block" class:opacity-40={!options.showGround}>
 			<span class="flex justify-between">
 				<span>高さの強調</span><span class="tabular-nums">× {options.exaggeration}</span>
 			</span>
@@ -179,6 +188,7 @@
 				min="1"
 				max="50"
 				step="1"
+				disabled={!options.showGround}
 				bind:value={options.exaggeration}
 			/>
 		</label>
@@ -203,6 +213,25 @@
 					<span>{legendMin} m</span><span>0</span><span>+{legendMax} m</span>
 				</div>
 			</div>
+			{#if !options.showGround}
+				<label class="ml-5 block text-xs">
+					<span class="flex justify-between">
+						<span>起伏の強調</span>
+						<span class="tabular-nums">× {geoidExaggeration.toLocaleString()}</span>
+					</span>
+					<input
+						class="w-full"
+						type="range"
+						min="0"
+						max="4"
+						step="0.1"
+						bind:value={options.geoidExaggerationLog}
+					/>
+					<span class="text-slate-600">
+						N がプラスの所は楕円体面 (背景地図) より上に、マイナスの所は下に出ます。
+					</span>
+				</label>
+			{/if}
 			<label class="ml-5 block text-xs">
 				不透明度
 				<input
