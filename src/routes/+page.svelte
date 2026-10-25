@@ -668,7 +668,7 @@
 	{#if profileEnds.length === 2}
 		<section
 			class={[
-				'absolute right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(2rem+env(safe-area-inset-bottom))] left-[max(0.75rem,env(safe-area-inset-left))] h-48 rounded-lg bg-white/90 p-2 shadow-lg backdrop-blur md:h-56',
+				'absolute right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(2rem+env(safe-area-inset-bottom))] left-[max(0.75rem,env(safe-area-inset-left))] h-52 rounded-xl border border-white/60 bg-white/90 px-3 pt-2 pb-1 shadow-xl ring-1 ring-slate-900/5 backdrop-blur md:h-64',
 				panelOpen && 'md:left-80'
 			]}
 		>
