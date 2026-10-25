@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ancestorTile, fillTemplate, lngLatToTile, resampleFromAncestor } from './tiles';
+import {
+	ancestorTile,
+	fillTemplate,
+	lngLatToTile,
+	resampleFromAncestor,
+	sampleCornersFromAncestor,
+	tileToLngLat
+} from './tiles';
 
 /** 値が x 方向に 1 ずつ増えるグリッド */
 function rampGrid(size: number) {
@@ -62,5 +69,26 @@ describe('fillTemplate', () => {
 		expect(fillTemplate('https://a/{z}/{x}/{y}.webp', { z: 1, x: 2, y: 3 })).toBe(
 			'https://a/1/2/3.webp'
 		);
+	});
+});
+
+describe('sampleCornersFromAncestor', () => {
+	it('隣り合う子タイルの境界の格子点は同じ値になる', () => {
+		const src = rampGrid(8);
+		const ancestor = { z: 4, x: 1, y: 1 };
+		const left = sampleCornersFromAncestor(src, ancestor, { z: 5, x: 2, y: 2 }, 4);
+		const right = sampleCornersFromAncestor(src, ancestor, { z: 5, x: 3, y: 2 }, 4);
+		expect(left.size).toBe(5);
+		expect(left.data[4]).toBeCloseTo(right.data[0]);
+		expect(left.data[4]).toBeCloseTo(3.5);
+	});
+});
+
+describe('tileToLngLat', () => {
+	it('lngLatToTile の逆になる', () => {
+		const { tile, u, v } = lngLatToTile(138.7274, 35.3606, 10);
+		const [lng, lat] = tileToLngLat(10, tile.x + u, tile.y + v);
+		expect(lng).toBeCloseTo(138.7274, 6);
+		expect(lat).toBeCloseTo(35.3606, 6);
 	});
 });

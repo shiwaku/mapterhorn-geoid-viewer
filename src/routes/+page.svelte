@@ -3,44 +3,92 @@
 	import {
 		Map as MaplibreMap,
 		NavigationControl,
+		addProtocol,
 		setWorkerUrl,
-		type MapMouseEvent
+		type MapMouseEvent,
+		type RasterDEMSourceSpecification
 	} from 'maplibre-gl';
 	// Vite の事前バンドルでは MapLibre が自分の Worker を見つけられないので明示する
 	import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
-	import { initGroundWorkers } from '#lib/ground-client.js';
-	import { MapboxOverlay } from '@deck.gl/mapbox';
+	import { MapLibreOverlay } from '@deck.gl/maplibre';
 	import { asset } from '$app/paths';
-	import { createLayers, type LayerOptions } from '#lib/layers.js';
-	import { queryPoint, setGeoidUrl, type PointHeights } from '#lib/sources.js';
+	import { initGroundWorkers, requestEllipsoidal } from '#lib/ground-client.js';
+	import { GEOID_COLOR_STOPS } from '#lib/colors.js';
+	import { createGeoidLayer } from '#lib/layers.js';
+	import { MAPTERHORN_MAX_ZOOM, queryPoint, setGeoidUrl, type PointHeights } from '#lib/sources.js';
+
+	/** OpenMapTiles スキーマのベクトルタイル (OpenFreeMap、API キー不要) */
+	const BASEMAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
 	const geoidUrl = new URL(asset('data/egm2008.pmtiles'), location.href).href;
 	setGeoidUrl(geoidUrl);
 	initGroundWorkers(geoidUrl);
 	setWorkerUrl(maplibreWorkerUrl);
 
-	let options: LayerOptions = $state({
+	// 地表面の地形には楕円体高 h = H + N を Worker で合成して渡す
+	addProtocol('ellipsoid', async ({ url }, controller) => {
+		const [z, x, y] = url.replace('ellipsoid://', '').split('/').map(Number);
+		return { data: await requestEllipsoidal({ z, x, y }, controller.signal) };
+	});
+
+	let options = $state({
 		exaggeration: 1,
 		showGround: true,
 		showGeoid: true,
-		groundOpacity: 1,
-		geoidOpacity: 0.8,
-		groundTexture: true
+		geoidOpacity: 0.4
 	});
 
 	let picked: { lng: number; lat: number; heights?: PointHeights; error?: string } | undefined =
 		$state();
 
-	let overlay: MapboxOverlay | undefined;
+	let map: MaplibreMap | undefined = $state();
+	let overlay: MapLibreOverlay | undefined;
+
+	function onStyleLoad(m: MaplibreMap) {
+		m.setProjection({ type: 'globe' });
+		m.setSky({
+			'sky-color': '#7fb6e8',
+			'horizon-color': '#e6f0fa',
+			'sky-horizon-blend': 0.6,
+			'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 7, 0]
+		});
+		const dem: RasterDEMSourceSpecification = {
+			type: 'raster-dem',
+			tiles: ['ellipsoid://{z}/{x}/{y}'],
+			encoding: 'terrarium',
+			tileSize: 512,
+			maxzoom: MAPTERHORN_MAX_ZOOM
+		};
+		// 地形と陰影は別のソースにする (MapLibre の推奨)
+		m.addSource('ground', dem);
+		m.addSource('hillshade', dem);
+		const firstSymbol = m.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+		m.addLayer(
+			{
+				id: 'hillshade',
+				type: 'hillshade',
+				source: 'hillshade',
+				paint: { 'hillshade-exaggeration': 0.4, 'hillshade-shadow-color': '#3d4a5c' }
+			},
+			firstSymbol
+		);
+		// 地名は日本語を優先する
+		for (const layer of m.getStyle().layers) {
+			if (layer.type === 'symbol' && layer.layout?.['text-field']) {
+				m.setLayoutProperty(layer.id, 'text-field', [
+					'coalesce',
+					['get', 'name:ja'],
+					['get', 'name']
+				]);
+			}
+		}
+		map = m;
+	}
 
 	function mountMap(container: HTMLDivElement) {
-		const map = new MaplibreMap({
+		const m = new MaplibreMap({
 			container,
-			style: {
-				version: 8,
-				sources: {},
-				layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#dfe7ef' } }]
-			},
+			style: BASEMAP_STYLE,
 			// 駿河湾から富士山を望む位置
 			center: [138.62, 35.05],
 			zoom: 9,
@@ -50,23 +98,24 @@
 			attributionControl: {
 				customAttribution: [
 					'<a href="https://mapterhorn.com/attribution" target="_blank">© Mapterhorn</a>',
-					'EGM2008: <a href="https://earth-info.nga.mil/" target="_blank">NGA</a>',
-					'<a href="https://www.openstreetmap.org/copyright" target="_blank">© OpenStreetMap contributors</a>'
+					'EGM2008: <a href="https://earth-info.nga.mil/" target="_blank">NGA</a>'
 				]
 			}
 		});
-		map.addControl(new NavigationControl({ visualizePitch: true }));
+		m.addControl(new NavigationControl({ visualizePitch: true }));
+		m.once('style.load', () => onStyleLoad(m));
 
-		overlay = new MapboxOverlay({ interleaved: false, layers: createLayers(options) });
-		map.addControl(overlay);
+		// 地表面の地形と前後関係を正しく描くため、MapLibre の描画に組み込む
+		overlay = new MapLibreOverlay({ interleaved: true, layers: [] });
+		m.addControl(overlay);
 		// 開発時のデバッグ用
-		if (import.meta.env.DEV) Object.assign(window, { __map: map, __overlay: overlay });
+		if (import.meta.env.DEV) Object.assign(window, { __map: m, __overlay: overlay });
 
-		map.on('click', async (e: MapMouseEvent) => {
+		m.on('click', async (e: MapMouseEvent) => {
 			const { lng, lat } = e.lngLat;
 			picked = { lng, lat };
 			try {
-				const heights = await queryPoint(lng, lat, Math.max(map.getZoom() + 1, 12));
+				const heights = await queryPoint(lng, lat, Math.max(m.getZoom() + 1, 12));
 				picked = { lng, lat, heights };
 			} catch (err) {
 				picked = { lng, lat, error: String(err) };
@@ -75,16 +124,31 @@
 
 		return () => {
 			overlay = undefined;
-			map.remove();
+			map = undefined;
+			m.remove();
 		};
 	}
 
 	$effect(() => {
-		const layers = createLayers({ ...options });
-		overlay?.setProps({ layers });
+		const { showGround, exaggeration } = options;
+		map?.setTerrain(showGround ? { source: 'ground', exaggeration } : null);
+	});
+
+	$effect(() => {
+		const layer = createGeoidLayer({
+			exaggeration: options.exaggeration,
+			visible: options.showGeoid,
+			opacity: options.geoidOpacity
+		});
+		overlay?.setProps({ layers: [layer] });
 	});
 
 	const fmt = (v: number) => `${v.toFixed(2)} m`;
+	const legendMin = GEOID_COLOR_STOPS[0][0];
+	const legendMax = GEOID_COLOR_STOPS[GEOID_COLOR_STOPS.length - 1][0];
+	const legendGradient = `linear-gradient(to right, ${GEOID_COLOR_STOPS.map(
+		([v, [r, g, b]]) => `rgb(${r} ${g} ${b}) ${((v - legendMin) / (legendMax - legendMin)) * 100}%`
+	).join(', ')})`;
 </script>
 
 <svelte:head>
@@ -101,7 +165,8 @@
 		<h1 class="text-base font-bold">地表面とジオイド面</h1>
 		<p class="text-xs text-slate-600">
 			地球楕円体 (WGS 84) を高さ 0 として、地表面 (楕円体高 h = H + N) とジオイド面 (ジオイド高 N)
-			を描いています。
+			を描いています。地球全体を見るときは、高さを強調しないとジオイドの起伏 (±100 m 程度)
+			は見えません。
 		</p>
 
 		<label class="block">
@@ -120,30 +185,24 @@
 
 		<fieldset class="space-y-1">
 			<label class="flex items-center gap-2">
-				<input type="checkbox" bind:checked={options.showGround} />
-				<span class="inline-block size-3 rounded-sm bg-[#d6c4a0]"></span>地表面
+				<input type="checkbox" bind:checked={options.showGround} />地表面 (地形)
 			</label>
-			<label class="ml-5 flex items-center gap-2 text-xs">
-				<input type="checkbox" bind:checked={options.groundTexture} />地図を貼る (OSM)
-			</label>
-			<label class="ml-5 block text-xs">
-				不透明度
-				<input
-					class="w-full"
-					type="range"
-					min="0.1"
-					max="1"
-					step="0.05"
-					bind:value={options.groundOpacity}
-				/>
-			</label>
+			<p class="ml-5 text-xs text-slate-600">
+				オフにすると、背景地図は楕円体面 (高さ 0) に貼られます。
+			</p>
 		</fieldset>
 
 		<fieldset class="space-y-1">
 			<label class="flex items-center gap-2">
 				<input type="checkbox" bind:checked={options.showGeoid} />
-				<span class="inline-block size-3 rounded-sm bg-[#286ee6]"></span>ジオイド面 (EGM2008)
+				ジオイド面 (EGM2008)
 			</label>
+			<div class="ml-5 text-xs">
+				<div class="h-2 rounded-sm" style:background={legendGradient}></div>
+				<div class="flex justify-between text-slate-600 tabular-nums">
+					<span>{legendMin} m</span><span>0</span><span>+{legendMax} m</span>
+				</div>
+			</div>
 			<label class="ml-5 block text-xs">
 				不透明度
 				<input

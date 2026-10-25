@@ -6,8 +6,9 @@
 標高 H  =  楕円体高 h  −  ジオイド高 N
 ```
 
-- **地表面**: 楕円体高 h = Mapterhorn の標高 H + EGM2008 のジオイド高 N
-- **ジオイド面**: EGM2008 のジオイド高 N
+- **地表面**: 楕円体高 h = Mapterhorn の標高 H + EGM2008 のジオイド高 N。MapLibre の地形として描き、背景地図 (OpenMapTiles スキーマのベクトルタイル) を貼ります。
+- **ジオイド面**: EGM2008 のジオイド高 N。ジオイド高で色分けし、地形に隠れないよう半透明で重ねます。
+- MapLibre の globe 投影で、地球全体から地点の近くまで見られます。
 - 地図をクリックすると、その地点の H・N・h を表示します。
 
 ## 注意
@@ -19,9 +20,10 @@ Mapterhorn の標高の基準は地域によって異なります。日本は国
 | パス                       | 内容                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------- |
 | `src/`                     | ビューア (SvelteKit + MapLibre GL JS + deck.gl)                                 |
+| `src/routes/+page.svelte`  | 地図 (globe・地形・背景地図) と操作パネル                                       |
 | `src/lib/sources.ts`       | Mapterhorn のタイルとジオイドタイルの読み込み・合成                             |
 | `src/lib/ground.worker.ts` | 地表面タイル (H + N) をメインスレッドの外で合成する Worker                      |
-| `src/lib/layers.ts`        | deck.gl の TerrainLayer (地表面・ジオイド面)                                    |
+| `src/lib/layers.ts`        | ジオイド面を描く deck.gl のレイヤ                                               |
 | `geoid/`                   | EGM2008 グリッドを Terrarium エンコードの PMTiles に変換するスクリプト (Python) |
 | `.github/workflows/ci.yml` | lint・テスト・ジオイドタイル生成・GitHub Pages への配信                         |
 
@@ -59,7 +61,7 @@ pnpm dev
 
 - 地形: [© Mapterhorn](https://mapterhorn.com/attribution) (各データソースのライセンスに従います。日本は国土地理院の基盤地図情報 数値標高モデル)
 - ジオイド: EGM2008 (NGA)。[PROJ-data](https://github.com/OSGeo/PROJ-data) が配布する `us_nga_egm08_25.tif` を使用
-- 地図: [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
+- 背景地図: [OpenFreeMap](https://openfreemap.org/) ([© OpenMapTiles](https://www.openmaptiles.org/)、[© OpenStreetMap contributors](https://www.openstreetmap.org/copyright))
 
 ## ライセンス
 

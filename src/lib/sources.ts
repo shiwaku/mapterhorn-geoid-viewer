@@ -5,6 +5,7 @@ import {
 	fillTemplate,
 	lngLatToTile,
 	resampleFromAncestor,
+	sampleCornersFromAncestor,
 	type TileIndex
 } from './tiles';
 
@@ -45,6 +46,12 @@ function loadGeoidGrid(tile: TileIndex): Promise<HeightGrid> {
 export async function geoidForTile(tile: TileIndex, size: number): Promise<HeightGrid> {
 	const ancestor = ancestorTile(tile, GEOID_MAX_ZOOM);
 	return resampleFromAncestor(await loadGeoidGrid(ancestor), ancestor, tile, size);
+}
+
+/** タイルを segments 分割した格子点のジオイド高 (メッシュの頂点用) */
+export async function geoidCornersForTile(tile: TileIndex, segments: number): Promise<HeightGrid> {
+	const ancestor = ancestorTile(tile, GEOID_MAX_ZOOM);
+	return sampleCornersFromAncestor(await loadGeoidGrid(ancestor), ancestor, tile, segments);
 }
 
 export async function fetchMapterhorn(tile: TileIndex, signal?: AbortSignal) {

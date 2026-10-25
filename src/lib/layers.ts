@@ -1,99 +1,98 @@
-import { TerrainLayer } from '@deck.gl/geo-layers';
-import type { Layer } from '@deck.gl/core';
-import { load } from '@loaders.gl/core';
-import { TerrainWorkerLoader } from '@loaders.gl/terrain';
-// メッシュ生成用の loaders.gl Worker を CDN ではなく自前で配信する
-import terrainWorkerUrl from '@loaders.gl/terrain/terrain-worker.js?url';
-import { requestEllipsoidal } from './ground-client';
-import { GEOID_MAX_ZOOM, MAPTERHORN_MAX_ZOOM, fetchGeoidBlob } from './sources';
-import type { TileIndex } from './tiles';
-import { terrariumDecoder } from './terrarium';
+import { COORDINATE_SYSTEM, type Layer } from '@deck.gl/core';
+import { TileLayer, type TileLayerProps } from '@deck.gl/geo-layers';
+import { SimpleMeshLayer } from '@deck.gl/mesh-layers';
+import { geoidColor } from './colors';
+import { geoidCornersForTile } from './sources';
+import { tileToLngLat, type TileIndex } from './tiles';
 
-export const OSM_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+/** 1 タイルの分割数。globe では三角形が球面の弦になるので、粗いと面が地球の内側に沈む */
+const SEGMENTS = 32;
 
-export type LayerOptions = {
+export type GeoidLayerOptions = {
 	exaggeration: number;
-	showGround: boolean;
-	showGeoid: boolean;
-	groundOpacity: number;
-	geoidOpacity: number;
-	groundTexture: boolean;
+	visible: boolean;
+	opacity: number;
 };
 
-type FetchContext = {
-	propName: string;
-	loadOptions?: Record<string, unknown>;
-	signal?: AbortSignal;
+type GeoidMesh = {
+	attributes: {
+		POSITION: { value: Float32Array; size: 3 };
+		COLOR_0: { value: Float32Array; size: 3 };
+	};
+	indices: { value: Uint32Array; size: 1 };
 };
 
-/** elevationData に渡す独自スキームの URL ({z}/{x}/{y} は deck.gl が置換する) */
-function parseTileUrl(url: string): TileIndex {
-	const m = url.match(/(\d+)\/(\d+)\/(\d+)$/);
-	if (!m) throw new Error(`タイル URL を解釈できません: ${url}`);
-	return { z: Number(m[1]), x: Number(m[2]), y: Number(m[3]) };
-}
+// 格子の三角形の並びはどのタイルでも同じ
+const indices = (() => {
+	const size = SEGMENTS + 1;
+	const out = new Uint32Array(SEGMENTS * SEGMENTS * 6);
+	let k = 0;
+	for (let j = 0; j < SEGMENTS; j++) {
+		for (let i = 0; i < SEGMENTS; i++) {
+			const a = j * size + i;
+			out.set([a, a + size, a + 1, a + 1, a + size, a + size + 1], k);
+			k += 6;
+		}
+	}
+	return out;
+})();
 
-async function fetchTexture(url: string, signal?: AbortSignal) {
-	const res = await fetch(url, { signal });
-	if (!res.ok) throw new Error(`テクスチャの取得に失敗: ${res.status}`);
-	return createImageBitmap(await res.blob());
-}
-
-function terrainFetch(
-	fetchHeights: (tile: TileIndex, signal?: AbortSignal) => Promise<Blob | ArrayBuffer>
-) {
-	return async (url: string, { propName, loadOptions, signal }: FetchContext) => {
-		if (propName === 'texture') return fetchTexture(url, signal);
-		const image = await fetchHeights(parseTileUrl(url), signal);
-		return load(image, TerrainWorkerLoader, loadOptions);
+/** ジオイド面のメッシュ。頂点は経緯度とジオイド高 (m) */
+async function buildGeoidMesh(tile: TileIndex, exaggeration: number): Promise<GeoidMesh> {
+	const grid = await geoidCornersForTile(tile, SEGMENTS);
+	const size = SEGMENTS + 1;
+	const positions = new Float32Array(size * size * 3);
+	const colors = new Float32Array(size * size * 3);
+	for (let j = 0; j < size; j++) {
+		for (let i = 0; i < size; i++) {
+			const k = j * size + i;
+			const [lng, lat] = tileToLngLat(tile.z, tile.x + i / SEGMENTS, tile.y + j / SEGMENTS);
+			const n = grid.data[k];
+			positions.set([lng, lat, n * exaggeration], k * 3);
+			colors.set(
+				geoidColor(n).map((c) => c / 255),
+				k * 3
+			);
+		}
+	}
+	return {
+		attributes: {
+			POSITION: { value: positions, size: 3 },
+			COLOR_0: { value: colors, size: 3 }
+		},
+		indices: { value: indices, size: 1 }
 	};
 }
 
-// レイヤを作り直しても再読み込みにならないよう、関数と設定は使い回す
-const loadOptions = { terrain: { workerUrl: terrainWorkerUrl } };
-const fetchGround = terrainFetch(requestEllipsoidal);
-const fetchGeoid = terrainFetch(fetchGeoidBlob);
+const renderSubLayers: TileLayerProps<GeoidMesh>['renderSubLayers'] = (props) =>
+	props.data &&
+	new SimpleMeshLayer({
+		id: props.id,
+		data: [0],
+		mesh: props.data,
+		// メッシュの頂点をそのまま経緯度として扱う
+		_instanced: false,
+		coordinateSystem: COORDINATE_SYSTEM.LNGLAT,
+		getPosition: () => [0, 0, 0],
+		// 色は頂点ごとの段彩で決める
+		getColor: [255, 255, 255],
+		material: { ambient: 0.75, diffuse: 0.35, shininess: 1, specularColor: [0, 0, 0] },
+		opacity: props.opacity,
+		// 陸ではジオイド面は地表の下にあり、海上では地表面 (h = N) と同じ高さになる。
+		// どちらでも見えるよう、地形との前後関係は無視して半透明で重ねる
+		parameters: { depthCompare: 'always', depthWriteEnabled: false }
+	});
 
-export function createLayers(opts: LayerOptions): Layer[] {
-	const elevationDecoder = terrariumDecoder(opts.exaggeration);
-	const layers: Layer[] = [];
-
-	// 半透明の地表越しにジオイド面が見えるよう、ジオイド面を先に描く
-	if (opts.showGeoid) {
-		layers.push(
-			new TerrainLayer({
-				id: 'geoid',
-				elevationData: 'geoid://{z}/{x}/{y}',
-				elevationDecoder,
-				maxZoom: GEOID_MAX_ZOOM,
-				color: [40, 110, 230],
-				opacity: opts.geoidOpacity,
-				meshMaxError: 0.5,
-				material: { ambient: 0.6, diffuse: 0.5, shininess: 32, specularColor: [80, 80, 80] },
-				fetch: fetchGeoid,
-				loadOptions,
-				updateTriggers: { elevationDecoder: opts.exaggeration }
-			})
-		);
-	}
-
-	if (opts.showGround) {
-		layers.push(
-			new TerrainLayer({
-				id: 'ground',
-				elevationData: 'ellipsoid://{z}/{x}/{y}',
-				texture: opts.groundTexture ? OSM_URL : null,
-				elevationDecoder,
-				maxZoom: MAPTERHORN_MAX_ZOOM,
-				color: [214, 196, 160],
-				opacity: opts.groundOpacity,
-				meshMaxError: 4,
-				fetch: fetchGround,
-				loadOptions,
-				updateTriggers: { elevationDecoder: opts.exaggeration }
-			})
-		);
-	}
-
-	return layers;
+export function createGeoidLayer(opts: GeoidLayerOptions): Layer {
+	return new TileLayer<GeoidMesh>({
+		id: 'geoid',
+		visible: opts.visible,
+		opacity: opts.opacity,
+		tileSize: 512,
+		// ジオイドは滑らかなので、これより先は拡大して使う
+		maxZoom: 12,
+		getTileData: ({ index }) => buildGeoidMesh(index, opts.exaggeration),
+		renderSubLayers,
+		updateTriggers: { getTileData: opts.exaggeration }
+	});
 }
